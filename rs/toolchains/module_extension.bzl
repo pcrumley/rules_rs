@@ -7,13 +7,14 @@ load(
     "check_version_valid",
     "produce_tool_suburl",
 )
-load("//rs/platforms:triples.bzl", "SUPPORTED_EXEC_TRIPLES", "SUPPORTED_TARGET_TRIPLES")
+load("//rs/platforms:triples.bzl", "SUPPORTED_EXEC_TRIPLES", "SUPPORTED_TIER_1_AND_2_TRIPLES")
 load("//rs/private:cargo_repository.bzl", "cargo_repository")
 load("//rs/private:clippy_repository.bzl", "clippy_repository")
 load("//rs/private:host_tools_repository.bzl", "host_tools_repository")
 load("//rs/private:rust_analyzer_repository.bzl", "rust_analyzer_repository")
 load("//rs/private:rust_src_repository.bzl", "rust_src_repository")
 load("//rs/private:rustc_repository.bzl", "rustc_repository")
+load("//rs/private:rustc_src_repository.bzl", "rustc_src_repository")
 load("//rs/private:rustfmt_repository.bzl", "rustfmt_repository")
 load("//rs/private:stdlib_repository.bzl", "stdlib_repository")
 load("//rs/private:toolchains_repository.bzl", "toolchains_repository")
@@ -52,6 +53,13 @@ def _tool_extension(urls):
 
 def _archive_path(tool_name, target_triple, version, iso_date):
     return produce_tool_suburl(tool_name, target_triple, version, iso_date) + _tool_extension(DEFAULT_STATIC_RUST_URL_TEMPLATES)
+
+def _rustc_src_tool_suburl(version, iso_date = None):
+    path = "rustc-{}-src".format(version)
+    return iso_date + "/" + path if (iso_date and version in ("beta", "nightly")) else path
+
+def _rustc_src_archive_path(version, iso_date):
+    return _rustc_src_tool_suburl(version, iso_date) + _tool_extension(DEFAULT_STATIC_RUST_URL_TEMPLATES)
 
 _TOOLCHAIN_TAG = tag_class(
     attrs = {
@@ -131,8 +139,7 @@ def _toolchains_impl(mctx):
     pending_downloads = {}
     new_facts = {}
 
-    def _request_sha(tool_name, version, iso_date, target_triple):
-        archive_path = _archive_path(tool_name, target_triple, version, iso_date)
+    def _request_archive_sha(archive_path, suburl):
         if archive_path in new_facts or archive_path in pending_downloads:
             return
 
@@ -141,7 +148,6 @@ def _toolchains_impl(mctx):
             new_facts[archive_path] = existing
             return
 
-        suburl = produce_tool_suburl(tool_name, target_triple, version, iso_date)
         sha_filename = _sanitize_path_fragment(archive_path) + ".sha256"
         pending_downloads[archive_path] = struct(
             token = mctx.download(
@@ -150,6 +156,12 @@ def _toolchains_impl(mctx):
                 block = False,
             ),
             file = sha_filename,
+        )
+
+    def _request_sha(tool_name, version, iso_date, target_triple):
+        _request_archive_sha(
+            _archive_path(tool_name, target_triple, version, iso_date),
+            produce_tool_suburl(tool_name, target_triple, version, iso_date),
         )
 
     # First pass: enqueue all sha downloads we don't already have.
@@ -161,8 +173,10 @@ def _toolchains_impl(mctx):
             for tool_name in ["rustc", "clippy", "cargo"]:
                 _request_sha(tool_name, base_version, iso_date, exec_triple)
 
-        for target_triple in SUPPORTED_TARGET_TRIPLES:
+        for target_triple in SUPPORTED_TIER_1_AND_2_TRIPLES:
             _request_sha("rust-std", base_version, iso_date, _parse_triple(target_triple))
+
+        _request_archive_sha(_rustc_src_archive_path(base_version, iso_date), _rustc_src_tool_suburl(base_version, iso_date))
 
     for version in rustfmt_versions:
         base_version, iso_date = _parse_version(version)
@@ -201,6 +215,7 @@ def _toolchains_impl(mctx):
     host_os = _normalize_os_name(mctx.os.name)
     host_arch = _normalize_arch_name(mctx.os.arch)
     host_cargo_repo = None
+    host_rustc_repo = None
 
     for version in versions | rustfmt_versions | rust_analyzer_versions:
         version_key = sanitize_version(version)
@@ -224,6 +239,8 @@ def _toolchains_impl(mctx):
                 cargo_name = "cargo_{}_{}".format(triple_suffix, version_key)
                 if host_cargo_repo == None and exec_triple.arch == host_arch and exec_triple.system == host_os:
                     host_cargo_repo = cargo_name
+                if host_rustc_repo == None and exec_triple.arch == host_arch and exec_triple.system == host_os:
+                    host_rustc_repo = rustc_name
 
                 cargo_repository(
                     name = cargo_name,
@@ -243,7 +260,7 @@ def _toolchains_impl(mctx):
                 )
 
         if version in versions:
-            for target_triple in SUPPORTED_TARGET_TRIPLES:
+            for target_triple in SUPPORTED_TIER_1_AND_2_TRIPLES:
                 stdlib_repository(
                     name = "rust_stdlib_{}_{}".format(sanitize_triple(target_triple), version_key),
                     triple = target_triple,
@@ -294,10 +311,29 @@ def _toolchains_impl(mctx):
 
     if host_cargo_repo == None:
         fail("Could not find host Cargo repository for {}-{}".format(host_os, host_arch))
+    if host_rustc_repo == None:
+        fail("Could not find host rustc repository for {}-{}".format(host_os, host_arch))
+    host_exe_suffix = ".exe" if host_os == "windows" else ""
     host_cargo = "@{}//:bin/cargo{}".format(
         host_cargo_repo,
-        ".exe" if host_os == "windows" else "",
+        host_exe_suffix,
     )
+    host_rustc = "@{}//:bin/rustc{}".format(
+        host_rustc_repo,
+        host_exe_suffix,
+    )
+
+    for version in versions:
+        version_key = sanitize_version(version)
+        base_version, iso_date = _parse_version(version)
+        rustc_src_repository(
+            name = "rustc_src_{}".format(version_key),
+            version = base_version,
+            iso_date = iso_date,
+            sha256 = new_facts[_rustc_src_archive_path(base_version, iso_date)],
+            cargo = host_cargo,
+            rustc = host_rustc,
+        )
 
     host_tools_repository(
         name = "rs_rust_host_tools",
