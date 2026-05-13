@@ -308,21 +308,17 @@ filegroup(
     name = "all_builds",
     srcs = ["@%s//:_workspace_deps" % test for test in TESTS] + [
         ":rust_binary",
-        ":verify_cfg_feature_target_dep",
-        ":verify_first_party_feature_propagation",
-        ":verify_rust_analyzer_toolchain",
         ":verify_self_dev_dependency_feature_present",
         ":verify_self_dev_dependency_no_self_alias",
         ":verify_self_dev_dependency_no_self_dev_dep",
         ":verify_single_crate_dep_data_key",
         ":verify_target_workspace_dep_feature_dep_absent",
         ":verify_target_workspace_dep_feature_feature_absent",
+        ":verify_vendored_workspace_dep",
         ":verify_workspace_default_features_default_present",
         ":verify_workspace_default_features_dep_present",
         ":verify_workspace_default_features_subfeature_present",
         ":verify_workspace_hyphen_dep_aliases",
-        ":verify_workspace_member_annotation_features",
-        ":verify_vendored_workspace_dep",
         ":verify_workspace_renamed_path_dep_aliases",
         "//prost:echo_rust_proto",
         "//self_dev_dependency/mycrate",
@@ -330,7 +326,13 @@ filegroup(
         "@binaries//:protoc-gen-prost__protoc-gen-prost",
     ] + select({
         "@platforms//os:windows": [],
-        "//conditions:default": [":verify_annotation_tags"],
+        "//conditions:default": [
+            ":verify_annotation_tags",
+            ":verify_cfg_feature_target_dep",
+            ":verify_first_party_feature_propagation",
+            ":verify_rust_analyzer_toolchain",
+            ":verify_workspace_member_annotation_features",
+        ],
     }),
 )
 
