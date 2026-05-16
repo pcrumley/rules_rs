@@ -22,7 +22,11 @@ def _rustc_repository_impl(rctx):
     exec_triple = triple(rctx.attr.triple)
     download_and_extract(rctx, "rustc", "rustc", exec_triple)
     _symlink_rust_objcopy_shared_libraries(rctx, exec_triple)
-    build_content = [BUILD_for_compiler(exec_triple, include_objcopy = True)]
+    build_content = [BUILD_for_compiler(
+        exec_triple,
+        include_linker = True,
+        include_objcopy = True,
+    )]
     if includes_rust_analyzer_proc_macro_srv(rctx.attr.version, rctx.attr.iso_date):
         build_content.append(BUILD_for_rust_analyzer_proc_macro_srv(exec_triple))
     rctx.file("BUILD.bazel", "\n".join(build_content))

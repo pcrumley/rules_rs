@@ -88,6 +88,12 @@ def declare_rustc_toolchains(
             cargo_clippy = "{}cargo_clippy_bin".format(clippy_repo_label),
             llvm_cov = "@llvm//tools:llvm-cov",
             llvm_profdata = "@llvm//tools:llvm-profdata",
+            linker = select({
+                "@platforms//cpu:wasm32": "{}rust-lld".format(rustc_repo_label),
+                "@platforms//cpu:wasm64": "{}rust-lld".format(rustc_repo_label),
+                "//conditions:default": None,
+            }),
+            linker_type = "direct",
             rust_objcopy = "{}rust-objcopy".format(rustc_repo_label),
             rustc_lib = "{}rustc_lib".format(rustc_repo_label),
             allocator_library = None,
