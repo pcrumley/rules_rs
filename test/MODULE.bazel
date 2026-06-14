@@ -72,6 +72,13 @@ bazel_dep(name = "aspect_bazel_lib", version = "2.19.3")
 bazel_dep(name = "bazel_lib", version = "3.2.2")
 bazel_dep(name = "protobuf", version = "34.0.bcr.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "rules_cc", version = "0.2.18")
+single_version_override(
+    module_name = "rules_cc",
+    patch_strip = 1,
+    # Remove after a rules_cc release contains c622263994ed44b549f563d50e767132baa35953.
+    patches = ["//:rules_cc-external-include-paths.patch"],
+)
+
 bazel_dep(name = "nasm", version = "2.16.03.bcr.2")
 single_version_override(
     module_name = "nasm",
@@ -90,6 +97,8 @@ single_version_override(
 
 single_version_override(
     module_name = "systemd",
+    patch_strip = 1,
+    patches = ["//:systemd-external-include-paths.patch"],
     version = "260.1.bcr.1",
 )
 
