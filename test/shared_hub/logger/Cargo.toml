@@ -1,0 +1,10 @@
+[package]
+name = "shared_hub_logger"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# `std` is enabled here, on the hub-owning workspace, so the shared hub builds
+# `log` with it. The consumer module asserts it via `use_hub(expect_features=)`.
+log = { version = "0.4", features = ["std"] }

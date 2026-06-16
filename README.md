@@ -320,6 +320,103 @@ If you need separate normal and test feature variants, model them as separate Ba
 </details>
 
 <details>
+<summary>Sharing one hub across bzlmod modules</summary>
+
+By default every module that uses the `crate` extension declares its own
+`crate.from_cargo(...)`, which builds an independent `@<name>` hub. If two
+modules in the same module graph each declare a hub, a crate they both depend on
+(e.g. `log`) resolves to **two different Bazel targets**, so two copies are
+linked into the same binary. For crates with process-global `static` state —
+`log`'s logger, `tracing`'s dispatcher, anything relying on cross-crate type
+identity — the two copies don't share state and the program misbehaves.
+
+To share a single hub, the owning module declares the hub with `from_cargo` and
+the other module **consumes** it with `crate.use_hub(...)` instead of declaring
+its own:
+
+```python
+# Owning module (e.g. the root) — declares the hub:
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+crate.from_cargo(name = "crates", cargo_toml = "//:Cargo.toml",
+                 cargo_lock = "//:Cargo.lock", platform_triples = [...])
+use_repo(crate, "crates")
+```
+
+```python
+# Consumer module (e.g. a git submodule with its own MODULE.bazel):
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+crate.use_hub(name = "crates")   # share the owning module's hub
+use_repo(crate, "crates")
+```
+
+Now `@crates//:log` is one target shared across both modules. The named hub must
+be created by some module's `from_cargo` in the same module graph, and that
+workspace must contain the crates the consumer references.
+
+To build the consumer module standalone too ("own hub when built standalone,
+shared hub when built as a dependency"), declare its `from_cargo` as a dev
+dependency — it is honored only when the module is the root:
+
+```python
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+crate.use_hub(name = "crates")
+use_repo(crate, "crates")
+
+# Honored only when THIS module is the root (standalone build):
+crate_standalone = use_extension(
+    "@rules_rs//rs:extensions.bzl", "crate", dev_dependency = True,
+)
+crate_standalone.from_cargo(name = "crates", cargo_toml = "//:Cargo.toml",
+                            cargo_lock = "//:Cargo.lock", platform_triples = [...])
+```
+
+### Feature resolution
+
+The hub is generated **once**, by the owning module's `from_cargo`, from that
+workspace's `Cargo.toml`/`Cargo.lock`; `use_hub` never regenerates it. So the
+feature set of `@crates//:log` is whatever the **owning workspace** resolved — a
+consumer cannot enable extra features, because there is only one shared target
+and it is built one way (enabling a feature per-consumer would mean a second copy
+of the crate, the very thing sharing avoids). The owning workspace must therefore
+enable the union of every feature any consumer needs (Cargo features are
+additive, so this is exactly how a single workspace already unifies features
+across its members).
+
+### Asserting what the hub provides
+
+Because a consumer cannot change what the shared hub gives it, a mismatch
+otherwise surfaces late as a confusing `rustc` error. A consumer can instead
+assert its expectations with optional `expect_*` guardrails on `use_hub`, which
+fail fast at module-resolution time with a clear message. **They only assert —
+they never change what the hub builds.**
+
+```python
+crate.use_hub(
+    name = "crates",
+    expect_features = {"log": ["std"]},  # log must be built with `std` enabled
+    expect_version = {"serde": "^1.0"},  # @crates//:serde must satisfy this req
+    expect_rev = {"mycrate": "abc123"},  # @crates//:mycrate must be this commit
+)
+```
+
+- `expect_features` (crate → features): each feature must be enabled in the hub.
+  A feature counts if enabled on at least one platform triple.
+- `expect_version` (crate → Cargo version req): the version behind
+  `@<hub>//:<crate>` must satisfy the requirement. Registry/path crates only —
+  listing a git crate fails (a git dep's version doesn't identify its commit).
+- `expect_rev` (crate → git commit, prefix-matched): the version behind
+  `@<hub>//:<crate>` must be built from this commit. Git crates only — listing a
+  registry/path crate fails. `expect_version` and `expect_rev` are mutually
+  exclusive for a given crate.
+
+Limitation: `aliases()` / `all_crate_deps()` in the generated hub are keyed by
+the hub-owning workspace's members, so a consumer module's packages are not in
+that map. Consumers must reference crates by explicit label (`@crates//:log`)
+rather than `all_crate_deps()`.
+
+</details>
+
+<details>
 <summary>Migration from rules_rust loads</summary>
 
 If you import `rules_rust` through the `rules_rs` extension, existing `load("@rules_rust//...")` statements can be kept during migration.
