@@ -4,7 +4,13 @@ load(
     _triple_to_constraint_set = "triple_to_constraint_set",
 )
 
-def triple_to_rust_constraint_set(target_triple):
+def _base_rust_constraint_set(target_triple):
+    """The Rust constraint set for a triple, before collision disambiguators.
+
+    This is everything except the constraints added by
+    `_disambiguator_constraint`. It is computed for both a triple and its
+    candidate sibling so we can tell whether they actually collide.
+    """
     constraints = _triple_to_constraint_set(target_triple)
     t = triple(target_triple)
 
@@ -24,8 +30,72 @@ def triple_to_rust_constraint_set(target_triple):
 
     return constraints
 
-def triple_to_constraint_set(target_triple):
-    constraints = triple_to_rust_constraint_set(target_triple)
+# Disambiguator constraints appended to one (or both) members of a colliding
+# soft/hard-float (or wasm threads on/off) pair.
+_HARDFLOAT = "@rules_rs//rs/platforms/constraints:hardfloat"
+_SOFTFLOAT = "@rules_rs//rs/platforms/constraints:softfloat"
+_WASM_THREADS_ON = "@rules_rs//rs/platforms/constraints:wasm_threads_on"
+_WASM_THREADS_OFF = "@rules_rs//rs/platforms/constraints:wasm_threads_off"
+
+def _sibling_and_constraint(target_triple, targets):
+    """Return (sibling_triple, this_constraint) for target_triple's ABI/threads
+    disambiguation axis, or (None, None) if it participates in none.
+
+    Only the axis whose marker the triple carries is considered; the caller is
+    responsible for confirming the sibling exists and actually collides.
+    """
+
+    # ARM float ABI, eabi/eabihf encoding. Check "eabihf" before "eabi" since
+    # the former contains the latter.
+    if "eabihf" in target_triple:
+        return (target_triple.replace("eabihf", "eabi"), _HARDFLOAT)
+    if "eabi" in target_triple:
+        return (target_triple.replace("eabi", "eabihf"), _SOFTFLOAT)
+
+    # Float ABI, "-softfloat" suffix encoding (e.g. aarch64-unknown-none vs
+    # aarch64-unknown-none-softfloat). The plain triple is the hardfloat half.
+    if target_triple.endswith("-softfloat"):
+        return (target_triple[:-len("-softfloat")], _SOFTFLOAT)
+    if (target_triple + "-softfloat") in targets:
+        return (target_triple + "-softfloat", _HARDFLOAT)
+
+    # WebAssembly threads, "-threads" suffix encoding (e.g. wasm32-wasip1 vs
+    # wasm32-wasip1-threads). The plain triple is the threads-off half.
+    if target_triple.endswith("-threads"):
+        return (target_triple[:-len("-threads")], _WASM_THREADS_ON)
+    if (target_triple + "-threads") in targets:
+        return (target_triple + "-threads", _WASM_THREADS_OFF)
+
+    return (None, None)
+
+def _disambiguator_constraint(target_triple, targets):
+    """Return the constraint that distinguishes target_triple from a colliding
+    sibling, or None when there is no genuine collision.
+
+    Scoped to real collisions: we only add a constraint when the sibling is also
+    in `targets` *and* the two project to the same base constraint set without
+    it. Lone targets -- and pairs that already differ (e.g. thumbv7em-none-eabi
+    vs ...eabihf, which rules_rust maps to distinct CPUs) -- are left untouched
+    so existing platforms keep matching them with no annotation.
+    """
+    sibling, constraint = _sibling_and_constraint(target_triple, targets)
+    if not sibling or sibling not in targets:
+        return None
+    if sorted(_base_rust_constraint_set(target_triple)) != sorted(_base_rust_constraint_set(sibling)):
+        return None
+    return constraint
+
+def triple_to_rust_constraint_set(target_triple, targets = None):
+    constraints = _base_rust_constraint_set(target_triple)
+
+    disambiguator = _disambiguator_constraint(target_triple, targets or ALL_TARGET_TRIPLES)
+    if disambiguator:
+        constraints.append(disambiguator)
+
+    return constraints
+
+def triple_to_constraint_set(target_triple, targets = None):
+    constraints = triple_to_rust_constraint_set(target_triple, targets)
     t = triple(target_triple)
 
     if t.system in ("linux", "nixos"):
