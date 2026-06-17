@@ -65,12 +65,11 @@ def _unhide_build_file_packages(rctx):
 
     The git repo is cloned verbatim, including any `.bazelignore` it ships for its own
     Bazel build. When a requested crate lives under a directory that file ignores — e.g.
-    a workspace-excluded vendored submodule such as `c/third_party/libsbp/rust/sbp` — the
-    crate BUILD file we generate there is unreachable: Bazel reports the package as
-    deleted. Drop any ignore entry that is an ancestor of (or equal to) a directory we
-    are about to write a crate BUILD file into. Other ignored siblings are left alone,
-    and since only the crates we generate are ever referenced, un-ignoring those
-    subtrees has no other effect.
+    a workspace-excluded vendored subdirectory — the crate BUILD file we generate there
+    is unreachable: Bazel reports the package as deleted. Drop any ignore entry that is
+    an ancestor of (or equal to) a directory we are about to write a crate BUILD file
+    into. Other ignored siblings are left alone, and since only the crates we generate
+    are ever referenced, un-ignoring those subtrees has no other effect.
     """
     bazelignore = rctx.path(".bazelignore")
     if not bazelignore.exists:
