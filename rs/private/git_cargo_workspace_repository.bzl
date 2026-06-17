@@ -60,11 +60,53 @@ crate(
         package_metadata_bazel_additive_build_file_content = cargo.bazel_metadata.get("additive_build_file_content", ""),
     ))
 
+def _unhide_build_file_packages(rctx):
+    """Stop the cloned repo's own `.bazelignore` from hiding crate packages we expose.
+
+    The git repo is cloned verbatim, including any `.bazelignore` it ships for its own
+    Bazel build. When a requested crate lives under a directory that file ignores — e.g.
+    a workspace-excluded vendored submodule such as `c/third_party/libsbp/rust/sbp` — the
+    crate BUILD file we generate there is unreachable: Bazel reports the package as
+    deleted. Drop any ignore entry that is an ancestor of (or equal to) a directory we
+    are about to write a crate BUILD file into. Other ignored siblings are left alone,
+    and since only the crates we generate are ever referenced, un-ignoring those
+    subtrees has no other effect.
+    """
+    bazelignore = rctx.path(".bazelignore")
+    if not bazelignore.exists:
+        return
+
+    package_dirs = [
+        dest.rsplit("/", 1)[0] if "/" in dest else ""
+        for dest in rctx.attr.build_files.keys()
+    ]
+
+    kept = []
+    dropped = []
+    for line in rctx.read(bazelignore).splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            kept.append(line)
+            continue
+        prefix = entry.rstrip("/")
+        if any([pkg == prefix or pkg.startswith(prefix + "/") for pkg in package_dirs]):
+            dropped.append(entry)
+        else:
+            kept.append(line)
+
+    if dropped:
+        rctx.file(bazelignore, "".join([line + "\n" for line in kept]))
+        if rctx.attr.verbose:
+            # buildifier: disable=print
+            print("rules_rs: dropped .bazelignore entries %s from %s so its crate packages load" % (dropped, rctx.name))
+
 def _git_cargo_workspace_repository_impl(rctx):
     git_repo(rctx, rctx.path("."))
 
     patch(rctx)
     rctx.delete(rctx.path(".git"))
+
+    _unhide_build_file_packages(rctx)
 
     workspace_cargo_toml = run_toml2json(rctx, rctx.attr.workspace_cargo_toml)
     for dest, additive_build_file_content in rctx.attr.build_files.items():
